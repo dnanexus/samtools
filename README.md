@@ -55,7 +55,7 @@ To plan background compactions efficiently, rocksort needs a rough estimate of t
 Block Size = 8*4 + ReadNameLength(including null) + CigarLength*4 + (ReadLength+1)/2 + ReadLength + TagLength
 ```
 
-Once all the data are loaded, `samtools rocksort` will log some feedback about the accuracy of the hint to standard error. The estimate needs not be fantastically accurate; +/- 20% or so is fine. If in doubt, overestimate.
+The estimate needs not be fantastically accurate; +/- 20% or so is fine. If in doubt, overestimate. Once all the data are loaded, `samtools rocksort` will log some feedback about the accuracy of the hint to standard error. 
 
 #### Disabling background compaction
 
