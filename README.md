@@ -1,4 +1,4 @@
-dnanexus / samtools
+[dnanexus / samtools](https://github.com/dnanexus/samtools)
 ===================
 
 This is a fork of [samtools](http://samtools.sourceforge.net/) maintained (without warranty) by [DNAnexus](https://www.dnanexus.com/). See [COPYING](https://github.com/dnanexus/samtools/blob/dnanexus/COPYING).
