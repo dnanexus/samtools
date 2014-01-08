@@ -63,4 +63,4 @@ With limited hardware configurations, the background compaction performed by `sa
 
 #### Setting the scratch directory
 
-By default, temporary files are written into the same directory as the final output BAM, similar to `samtools sort`. You can override this by setting the `TMPDIR` environment variable to something else. The scratch directory should be high-performance storage, and should have at least the uncompressed data size (4X the expected size of the final BAM) in free space.
+By default, temporary files are written into the same directory as the final output BAM, similar to `samtools sort`. You can override this by setting the `TMPDIR` environment variable to something else. The scratch directory should be high-performance storage, and should have at least the uncompressed data size (4-5X the expected size of the final BAM) in free space.
