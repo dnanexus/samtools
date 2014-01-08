@@ -49,7 +49,7 @@ cat <in.bam> | pigz -dc | samtools rocksort [options] - <out.prefix>
 
 #### Estimating data size (`-s`)
 
-To plan background compactions efficiently, rocksort needs a rough estimate of the total *uncompressed* size of the BAM data. The default assumption is 512GiB, which corresponds to a deep human WGS, 125GiB compressed and sorted final product BAM as of this writing (early 2014). If your data is much smaller or larger than this, it will probably be beneficial to adjust the hint. The 4:1 ratio is a reasonable assumption, or alternatively, here's a bottom-up formula for the size of a single BAM alignment block ([source](http://genome.sph.umich.edu/wiki/SAM)), which you can multiply by the expected number of read alignments:
+To plan background compactions efficiently, rocksort needs a rough estimate of the total *uncompressed* size of the BAM data. The default assumption is 512GiB, which roughly corresponds to a 125GiB deep human WGS final BAM (sorted and compressed). If your data is much smaller or larger than this, it will probably be beneficial to adjust the hint. The 4:1 ratio is a reasonable assumption, or alternatively, here's a bottom-up formula for the size of a single BAM alignment block ([source](http://genome.sph.umich.edu/wiki/SAM)), which you can multiply by the expected number of read alignments:
 
 ```
 Block Size = 8*4 + ReadNameLength(including null) + CigarLength*4 + (ReadLength+1)/2 + ReadLength + TagLength
