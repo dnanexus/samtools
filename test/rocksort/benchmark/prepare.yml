@@ -1,0 +1,80 @@
+# Ansible playbook for preparing an EC2 instance to run samtools rocksort benchmarks.
+# Current assumptions:
+# - Ubuntu 12.04 LTS
+# - Scratch RAID0 array /dev/md0 mounted at /mnt
+# - Desired git revisions of htslib and samtools have been cloned under /root
+# To bootstrap (as root):
+# add-apt-repository ppa:rquillo/ansible -y && apt-get update && apt-get install ansible -y && ansible-playbook -i localhost, /root/samtools/test/rocksort/benchmark/prepare.yml
+---
+- hosts: localhost
+  connection: local
+  tasks:
+  - name: apt
+    apt_repository: repo='ppa:ubuntu-toolchain-r/test'
+  - apt: update_cache=yes upgrade=full
+  - apt: pkg={{item}}
+    with_items:
+    - htop
+    - dstat
+    - libsnappy-dev
+    - libjemalloc-dev
+    - libncurses5-dev
+    - aria2
+    - zlib1g-dev
+    - libbz2-dev
+    - gcc-4.8
+    - g++-4.8
+    - pigz
+    - mutt
+  - name: libgflags
+    get_url: dest=/root/libgflags.deb url=https://gflags.googlecode.com/files/libgflags0_2.0-1_amd64.deb
+  - get_url: dest=/root/libgflags-dev.deb url=https://gflags.googlecode.com/files/libgflags-dev_2.0-1_amd64.deb
+  - command: "dpkg --skip-same-version -i /root/{{item}}.deb"
+    with_items:
+    - libgflags
+    - libgflags-dev
+  - name: make gcc 4.8 the default
+    command: update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-4.8 50
+  - command: update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-4.8 50
+
+  - name: build samtools
+    command: make chdir=/root/samtools
+
+  - name: retrieve several BAMs from s3://1000genomes
+    file: path=/mnt/input_raw state=directory
+  - command: aria2c -x 10 -j 10 --lowest-speed-limit=1M {{ item.url }} chdir=/mnt/input_raw creates=/mnt/input_raw/{{ item.name }}
+    with_items:
+    - { url: 'https://s3.amazonaws.com/1000genomes/data/HG02345/exome_alignment/HG02345.mapped.ILLUMINA.bwa.PEL.exome.20130415.bam'
+      , name: 'HG02345.mapped.ILLUMINA.bwa.PEL.exome.20130415.bam' }
+    - { url: 'https://s3.amazonaws.com/1000genomes/data/HG02345/alignment/HG02345.mapped.ILLUMINA.bwa.PEL.low_coverage.20130415.bam'
+      , name: 'HG02345.mapped.ILLUMINA.bwa.PEL.low_coverage.20130415.bam' }
+    - { url: 'https://s3.amazonaws.com/1000genomes/data/HG02348/alignment/HG02348.mapped.ILLUMINA.bwa.PEL.low_coverage.20130415.bam'
+      , name: 'HG02348.mapped.ILLUMINA.bwa.PEL.low_coverage.20130415.bam' }
+    - { url: 'https://s3.amazonaws.com/1000genomes/data/HG02351/alignment/HG02351.mapped.ILLUMINA.bwa.CDX.low_coverage.20120522.bam'
+      , name: 'HG02351.mapped.ILLUMINA.bwa.CDX.low_coverage.20120522.bam' }
+    - { url: 'https://s3.amazonaws.com/1000genomes/data/HG02353/alignment/HG02353.mapped.ILLUMINA.bwa.CDX.low_coverage.20120522.bam'
+      , name: 'HG02353.mapped.ILLUMINA.bwa.CDX.low_coverage.20120522.bam' }
+    - { url: 'https://s3.amazonaws.com/1000genomes/data/HG02355/alignment/HG02355.mapped.ILLUMINA.bwa.CDX.low_coverage.20120522.bam'
+      , name: 'HG02355.mapped.ILLUMINA.bwa.CDX.low_coverage.20120522.bam' }
+    - { url: 'https://s3.amazonaws.com/1000genomes/data/HG02356/alignment/HG02356.mapped.ILLUMINA.bwa.CDX.low_coverage.20120522.bam'
+      , name: 'HG02356.mapped.ILLUMINA.bwa.CDX.low_coverage.20120522.bam' }
+    - { url: 'https://s3.amazonaws.com/1000genomes/data/HG02360/alignment/HG02360.mapped.ILLUMINA.bwa.CDX.low_coverage.20120522.bam'
+      , name: 'HG02360.mapped.ILLUMINA.bwa.CDX.low_coverage.20120522.bam' }
+    - { url: 'https://s3.amazonaws.com/1000genomes/data/HG02363/alignment/HG02363.mapped.ILLUMINA.bwa.CDX.low_coverage.20120522.bam'
+      , name: 'HG02363.mapped.ILLUMINA.bwa.CDX.low_coverage.20120522.bam'}
+
+  - name: shuffle testing BAMs
+    file: path=/mnt/input state=directory
+  - shell: cat HG02345.mapped.ILLUMINA.bwa.PEL.exome.20130415.bam | pigz -dc | /root/samtools/samtools rocksort -u 31415926 -@ 8 -m 512M -s 32G - /mnt/input/wes chdir=/mnt/input_raw creates=/mnt/input/wes.bam
+  - shell: cat HG02345.mapped.ILLUMINA.bwa.PEL.low_coverage.20130415.bam | pigz -dc | /root/samtools/samtools rocksort -u 31415926 -@ 8 -m 512M -s 64G - /mnt/input/wgs_lo chdir=/mnt/input_raw creates=/mnt/input/wgs_lo.bam
+
+  - name: create synthetic high-coverage WGS BAM by pooling several low-coverage BAMs
+    command: /root/samtools/samtools merge -@ 8 /mnt/input/wgs_hi.sorted.bam HG02348.mapped.ILLUMINA.bwa.PEL.low_coverage.20130415.bam HG02351.mapped.ILLUMINA.bwa.CDX.low_coverage.20120522.bam HG02353.mapped.ILLUMINA.bwa.CDX.low_coverage.20120522.bam HG02355.mapped.ILLUMINA.bwa.CDX.low_coverage.20120522.bam HG02356.mapped.ILLUMINA.bwa.CDX.low_coverage.20120522.bam HG02360.mapped.ILLUMINA.bwa.CDX.low_coverage.20120522.bam HG02363.mapped.ILLUMINA.bwa.CDX.low_coverage.20120522.bam chdir=/mnt/input_raw creates=/mnt/input/wgs_hi.sorted.bam
+  - shell: cat wgs_hi.sorted.bam | pigz -dc | /root/samtools/samtools rocksort -u 31415926 -@ 8 -m 512M -s 500G - wgs_hi chdir=/mnt/input creates=/mnt/input/wgs_hi.bam
+
+  - file: path=/mnt/output state=directory
+
+  - name: pre-warm the remaining free space on the scratch device
+    copy: src=prewarm.sh dest=/root/prewarm.sh owner=root group=root mode=0700
+  - command: /root/prewarm.sh creates=/mnt/.PREWARMED
+  - command: blockdev --setra 512 /dev/md0

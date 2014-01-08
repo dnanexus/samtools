@@ -14,9 +14,9 @@ AOBJS=		bam_index.o bam_plcmd.o sam_view.o \
 			bam_rmdup.o bam_rmdupse.o bam_mate.o bam_stat.o bam_color.o \
 			bamtk.o kaln.o bam2bcf.o bam2bcf_indel.o errmod.o sample.o \
 			cut_target.o phase.o bam2depth.o padding.o bedcov.o bamshuf.o \
-            faidx.o stats.o bam_flags.o
+            faidx.o stats.o bam_flags.o bam_rocksort.o
             # tview todo: bam_tview.o bam_tview_curses.o bam_tview_html.o bam_lpileup.o
-INCLUDES=	-I. -I$(HTSDIR)
+INCLUDES=	-I. -I$(HTSDIR) -I./rocksdb/include
 LIBCURSES=	-lcurses # -lXCurses
 
 prefix      = /usr/local
@@ -87,8 +87,17 @@ lib:libbam.a
 libbam.a:$(LOBJS)
 	$(AR) -csru $@ $(LOBJS)
 
-samtools: $(AOBJS) libbam.a $(HTSLIB)
-	$(CC) -pthread $(LDFLAGS) -o $@ $(AOBJS) libbam.a $(HTSLIB) $(LDLIBS) $(LIBCURSES) -lm -lz
+samtools:rocksdb/Makefile LIBROCKSDB_A libbam.a $(HTSLIB) $(AOBJS)
+	$(CC) -pthread $(LDFLAGS) -o $@ $(AOBJS) libbam.a $(HTSLIB) rocksdb/librocksdb.a $(LDLIBS) $(LIBCURSES) -lstdc++ -ljemalloc -lm -lz -lrt -lsnappy -lbz2
+
+rocksdb/Makefile:
+	git submodule init
+	git submodule sync
+	git submodule update
+
+LIBROCKSDB_A:
+	git submodule update
+	OPT=-DNDEBUG $(MAKE) -C rocksdb librocksdb.a -j16
 
 bgzip: bgzip.o $(HTSLIB)
 	$(CC) -pthread $(LDFLAGS) -o $@ bgzip.o $(HTSLIB) -lz
@@ -117,6 +126,7 @@ bam_reheader.o: bam_reheader.c $(htslib_bgzf_h) $(bam_h)
 bam_rmdup.o: bam_rmdup.c $(sam_h) $(HTSDIR)/htslib/khash.h
 bam_rmdupse.o: bam_rmdupse.c $(sam_h) $(HTSDIR)/htslib/khash.h $(HTSDIR)/htslib/klist.h
 bam_sort.o: bam_sort.c $(bam_h) $(HTSDIR)/htslib/ksort.h
+bam_rocksort.o: bam_rocksort.c $(bam_h)
 bam_stat.o: bam_stat.c $(bam_h)
 bam_tview.o: bam_tview.c $(bam_tview_h)
 bam_tview_curses.o: bam_tview_curses.c $(bam_tview_h)
@@ -144,6 +154,9 @@ stats.o: stats.c $(sam_h) sam_header.h samtools.h $(HTSDIR)/htslib/khash.h $(HTS
 
 check test:
 	test/test.pl
+
+test_rocksort: samtools
+	test/rocksort/test.sh
 
 
 # misc programs
@@ -204,4 +217,4 @@ tags:
 force:
 
 
-.PHONY: all check clean distclean force install lib mostlyclean tags test
+.PHONY: all check clean distclean force install lib mostlyclean tags test LIBROCKSDB_A
