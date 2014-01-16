@@ -308,6 +308,7 @@ static int rocksdb_to_bam(rocksdb_t *rdb, const bam_header_t *header, const char
 		goto cleanup;
 	}
 	rocksdb_readoptions_set_verify_checksums(rdbrdopts, 0);
+	rocksdb_readoptions_set_prefetch(rdbrdopts, 1);
 	if (!(rdbiter = rocksdb_create_iterator(rdb, rdbrdopts))) {
 		ret = -4;
 		goto cleanup;
