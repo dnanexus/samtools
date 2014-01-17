@@ -61,7 +61,7 @@ The estimate needs not be fantastically accurate; +/- 20% or so is fine. If in d
 
 With limited hardware configurations, the background compaction performed by `samtools rocksort` may be counterproductive. You can effectively disable background compaction by setting the data size estimate absurdly large, e.g. `-s 999999T`. The result will usually still be modestly faster than `samtools sort`, except for datasets that fit entirely in the provisioned RAM. 
 
-If you disable background compactions then you can also increase the RAM per thread setting (`-m`) by 50-100%. This is because some of the provisioned memory is set aside for background compactions, and will not be used if they're disabled.
+If you disable background compactions then you can also increase the RAM per thread setting (`-m`) by 50% or so. This is because some of the provisioned memory is set aside for background compactions, and will not be used if they're disabled.
 
 #### Setting the scratch directory
 
