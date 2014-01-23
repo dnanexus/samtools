@@ -5,7 +5,7 @@ This is a fork of [samtools](http://samtools.sourceforge.net/) maintained (witho
 
 ### Compiling
 
-This version of samtools incorporates [RocksDB](http://rocksdb.org/) as a [git submodule](http://git-scm.com/docs/git-submodule). Unfortunately RocksDB has several build dependencies; see [facebook/rocksdb/INSTALL.md](https://github.com/facebook/rocksdb/blob/master/INSTALL.md). Additionally, a development installation of [jemalloc](http://www.canonware.com/jemalloc/) is required (available in most Linux package managers).
+This version of samtools incorporates [RocksDB](http://rocksdb.org/) as a [git submodule](http://git-scm.com/docs/git-submodule). RocksDB has several build dependencies; see [facebook/rocksdb/INSTALL.md](https://github.com/facebook/rocksdb/blob/master/INSTALL.md). Additionally, a development installation of [jemalloc](http://www.canonware.com/jemalloc/) is required (available in most Linux package managers).
 
 Then,
 ```{bash}
