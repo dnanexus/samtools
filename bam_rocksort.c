@@ -308,6 +308,7 @@ static int rocksdb_to_bam(rocksdb_t *rdb, const bam_header_t *header, const char
 		goto cleanup;
 	}
 	rocksdb_readoptions_set_verify_checksums(rdbrdopts, 0);
+	rocksdb_readoptions_set_prefetch(rdbrdopts, 1);
 	if (!(rdbiter = rocksdb_create_iterator(rdb, rdbrdopts))) {
 		ret = -4;
 		goto cleanup;
@@ -335,10 +336,10 @@ static int rocksdb_to_bam(rocksdb_t *rdb, const bam_header_t *header, const char
 		bam_write1(fp, b);
 		(*count)++;
 
-		/* if requested, periodically reopen the iterator at the current key,
-		   to start taking advantage of any background compactions that've
-		   finished in the meantime. */
-		if (reopen > 0 && (*count) % reopen == 0) {
+		/* if requested, reopen the iterator at the current key, to start
+		   taking advantage of any background compactions that've finished
+		   in the meantime. */
+		if (reopen > 0 && (*count) == reopen) {
 			reopen_key = rocksdb_iter_key(rdbiter, &reopen_key_len);
 			if (!(rdbiter2 = rocksdb_create_iterator(rdb, rdbrdopts))) {
 				ret = -4;
@@ -508,6 +509,7 @@ int bam_rocksort_core_ext(const int sort_key, const char *fn, const char *prefix
 
 	/* CONCURRENCY */
 	/* up to two concurrent memtable flushes (see below) */
+	rocksdb_env_set_background_threads(rdbenv, n_threads);
 	max_background_flushes = n_threads > 1 ? 2 : 1;
 	rocksdb_env_set_high_priority_background_threads(rdbenv, max_background_flushes);
 	rocksdb_options_set_max_background_flushes(rdbopts, max_background_flushes);
@@ -517,8 +519,7 @@ int bam_rocksort_core_ext(const int sort_key, const char *fn, const char *prefix
 		   seems to use up substantial memory */
 		max_background_compactions = 3;
 	}
-	if (max_background_compactions > 0) {
-		rocksdb_env_set_background_threads(rdbenv, n_threads);
+	if (data_size_hint > 0 && max_background_compactions > 0) {
 		rocksdb_options_set_max_background_compactions(rdbopts, max_background_compactions);
 	} else {
 		rocksdb_options_set_disable_auto_compactions(rdbopts, 1);
@@ -534,54 +535,39 @@ int bam_rocksort_core_ext(const int sort_key, const char *fn, const char *prefix
 	   loading */
 	rocksdb_options_set_memtable_vector_rep(rdbopts);
 
-	/* flush memtables to disk in batches of max_mem/4 bytes, buffering up
-	   to 3 batches in memory. we buffer only 3 even though each one is 1/4
-	   of allowed memory in order to stay under the memory limit when
-	   background compactions, which use some memory, are going on. with 3
-	   buffers we hope that RocksDB takes no more than 2X as long to sort,
-	   Snappy-compress and write each buffer as it does for us to initially
-	   read, parse and insert it. */
-	bytes_per_file = max_mem / 4;
+	/* Keep up to 3 memtables in memory (one loading, two flushing). If
+	   background compaction is enabled, set aside some memory for them by
+	   making each memtable 1/4 instead of 1/3 of the total provisioned.
+       With two flushing memtables we hope that RocksDB takes no more than
+       2X as long to sort, Snappy-compress and write each buffer as it
+       does for us to initially read, parse and insert it. */
+	bytes_per_file = max_mem / (data_size_hint > 0 ? 4 : 3);
 	rocksdb_options_set_write_buffer_size(rdbopts, bytes_per_file);
 	rocksdb_options_set_max_write_buffer_number(rdbopts, 3);
 	/* compress in 2MB blocks */
 	rocksdb_options_set_block_size(rdbopts, 2*MB);
 
 	/* TUNE ON-DISK COMPACTION  */
-
 	/* use 'universal' compaction which has lower write amplification and
 	   higher read amplification than level compaction - this is the right
 	   tradeoff given that we're ultimately just going to do one sequential
 	   scan over the DB and then delete it. */
-	rocksdb_options_set_compaction_style(rdbopts, rocksdb_universal_compaction);
+	if (data_size_hint > 0) {
+		rocksdb_options_set_compaction_style(rdbopts, rocksdb_universal_compaction);
 
-	/* configure universal compaction to merge batches of disk files, using
-	   background cpu and disk bandwidth to reduce the merging work that has
-	   to be done in the unparallelized critical path of writing out the
-	   final BAM file */
-	if (data_size_hint < 2*bytes_per_file) {
-		/* data size hint not provided or unreasonably low; supply a default
-		   assumption of 512GB (roughly a deep human WGS) */
-		data_size_hint = 512*GB;
-		fprintf(stderr, "[bam_rocksort_core] WARNING: assuming uncompressed data size of %llu bytes since hint was absent or unreasonably small; consider providing an accurate size hint (-s) to optimize sort performance\n", (unsigned long long) data_size_hint);
+		/* if there will be T total buffers, merge them in batches of sqrt(T) */
+		files_per_compaction = ((unsigned int)sqrt(((float)data_size_hint)/bytes_per_file)) + 1;
+		rocksdb_options_set_level0_file_num_compaction_trigger(rdbopts, 2*files_per_compaction);
+		rocksdb_universal_compaction_options_set_min_merge_width(rdbucopts, files_per_compaction);
+		rocksdb_universal_compaction_options_set_max_merge_width(rdbucopts, 2*files_per_compaction);
+		rocksdb_universal_compaction_options_set_stop_style(rdbucopts, rocksdb_similar_size_compaction_stop_style);
+		rocksdb_universal_compaction_options_set_size_ratio(rdbucopts, 50);
+		/* disable compaction for size amplification - useless since we won't be
+		   overwriting or deleting anything */
+		rocksdb_universal_compaction_options_set_max_size_amplification_percent(rdbucopts, 1<<30);
+		rocksdb_options_set_universal_compaction_options(rdbopts, rdbucopts);
 	}
-	/* if there will be T total buffers, merge them in batches of sqrt(T) */
-	files_per_compaction = ((unsigned int)sqrt(((float)data_size_hint)/bytes_per_file)) + 1;
-	rocksdb_options_set_level0_file_num_compaction_trigger(rdbopts, 2*files_per_compaction);
-	rocksdb_universal_compaction_options_set_min_merge_width(rdbucopts, files_per_compaction);
-	rocksdb_universal_compaction_options_set_max_merge_width(rdbucopts, 2*files_per_compaction);
-	rocksdb_universal_compaction_options_set_stop_style(rdbucopts, rocksdb_similar_size_compaction_stop_style);
-	rocksdb_universal_compaction_options_set_size_ratio(rdbucopts, 50);
-	/* disable compaction for size amplification - useless since we won't be
-	   overwriting or deleting anything */
-	rocksdb_universal_compaction_options_set_max_size_amplification_percent(rdbucopts, 1<<30);
-	rocksdb_options_set_universal_compaction_options(rdbopts, rdbucopts);
-
-	/* junk:
-	rocksdb_options_set_min_write_buffer_number_to_merge(rdbopts, max_write_buffer_number / 3);
-	rocksdb_options_set_target_file_size_base(rdbopts, 4*16777216);
-	rocksdb_options_set_source_compaction_factor(rdbopts, 10);
-	*/
+	/* END OF ROCKSDB CONFIGURATION */
 
 	rdbpath = choose_rocksdb_path(prefix);
 	if (!rdbpath) {
@@ -602,17 +588,19 @@ int bam_rocksort_core_ext(const int sort_key, const char *fn, const char *prefix
 	}
 
 	/* Provide feedback on data_size_hint */
-	if (((float)actual_data_size)/data_size_hint > 1.2) {
-		fprintf(stderr, "[bam_rocksort_core] WARNING: actual uncompressed data size (%llu bytes) was well above the assumption (%llu bytes); consider providing an accurate size hint (-s) to optimize sort performance\n", actual_data_size, (unsigned long long) data_size_hint);
-	} else if (((float)actual_data_size)/data_size_hint < 0.8) {
-		fprintf(stderr, "[bam_rocksort_core] WARNING: actual uncompressed data size (%llu bytes) was well below the assumption (%llu bytes); consider providing an accurate size hint (-s) to optimize sort performance\n", actual_data_size, (unsigned long long) data_size_hint);
-	}  else {
-		fprintf(stderr, "[bam_rocksort_core] actual uncompressed data size (%llu bytes) was pretty close to the assumption (%llu bytes)\n", actual_data_size, (unsigned long long) data_size_hint);
+	if (data_size_hint > 0) {
+		if (((float)actual_data_size)/data_size_hint > 1.2) {
+			fprintf(stderr, "[bam_rocksort_core] WARNING: actual uncompressed data size (%llu bytes) was well above the assumption (%llu bytes); consider providing an accurate size hint (-s) to optimize sort performance\n", actual_data_size, (unsigned long long) data_size_hint);
+		} else if (((float)actual_data_size)/data_size_hint < 0.8) {
+			fprintf(stderr, "[bam_rocksort_core] WARNING: actual uncompressed data size (%llu bytes) was well below the assumption (%llu bytes); consider providing an accurate size hint (-s) to optimize sort performance\n", actual_data_size, (unsigned long long) data_size_hint);
+		}  else {
+			fprintf(stderr, "[bam_rocksort_core] actual uncompressed data size (%llu bytes) was pretty close to the assumption (%llu bytes)\n", actual_data_size, (unsigned long long) data_size_hint);
+		}
 	}
 
 	/* Export sorted BAM from RocksDB */
 	fprintf(stderr, "[bam_rocksort_core] Writing %llu records to %s...\n", count1, fnout);
-	if ((ret = rocksdb_to_bam(rdb, header, fnout, n_threads, level, count1/4, &count2)) != 0) {
+	if ((ret = rocksdb_to_bam(rdb, header, fnout, n_threads, level, count1/3, &count2)) != 0) {
 		goto cleanup;
 	}
 
@@ -698,16 +686,17 @@ int bam_rocksort(int argc, char *argv[])
 	}
 	if (optind + 2 > argc) {
 		fprintf(stderr, "\n");
-		fprintf(stderr, "Usage:   samtools rocksort [options] <in.bam> <out.prefix>\n\n");
-		fprintf(stderr, "Options: -n        sort by read name\n");
-		fprintf(stderr, "         -f        use <out.prefix> as full file name instead of prefix\n");
-		fprintf(stderr, "         -o        final output to stdout\n");
-		fprintf(stderr, "         -k        keep RocksDB instead of deleting it when done\n");
-		fprintf(stderr, "         -l INT    compression level, from 0 to 9 [-1]\n");
-		fprintf(stderr, "         -@ INT    number of sorting and compression threads [1]\n");
-		fprintf(stderr, "         -m INT    max memory per thread; suffix K/M/G recognized [768M]\n");
-		fprintf(stderr, "         -s INT    hint as to total uncompressed BAM data size; suffix K/M/G recognized\n");
-		fprintf(stderr, "         -u INT    unsort: shuffle the BAM using given random seed\n");
+		fprintf(stderr, "Usage:   samtools rocksort [options] <in.bam|-> <out.prefix>\n\n");
+		fprintf(stderr, "    -@ INT    number of sorting and compression threads [1]\n");
+		fprintf(stderr, "    -m INT    max memory per thread; suffix K/M/G/T recognized [768M]\n");
+		fprintf(stderr, "    -s INT    plan background compactions assuming this uncompressed\n");
+		fprintf(stderr, "              BAM data size; suffix K/M/G/T recognized [off]\n\n");
+		fprintf(stderr, "    -f        use <out.prefix> as full file name instead of prefix\n");
+		fprintf(stderr, "    -o        final output to stdout\n");
+		fprintf(stderr, "    -l INT    compression level, from 0 to 9 [-1]\n");
+		fprintf(stderr, "    -k        keep RocksDB instead of deleting it when done\n\n");
+		fprintf(stderr, "    -n        sort by read name\n");
+		fprintf(stderr, "    -u INT    unsort: shuffle the BAM using given random seed\n");
 		fprintf(stderr, "\n");
 		return 1;
 	}
