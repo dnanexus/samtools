@@ -18,7 +18,7 @@ This will produce the executable `samtools/samtools`, which will probably assume
 
 ### Using rocksort
 
-This section has specific instructions for using the `rocksort` subcommand; for a more general introduction, see our blog post. The basic invocation of `samtools rocksort` is similar to `samtools sort`:
+This section has specific instructions for using the `rocksort` subcommand; for a more general introduction, see [our blog post](http://devblog.dnanexus.com/faster-bam-sorting-with-samtools-and-rocksdb/). The basic invocation of `samtools rocksort` is similar to `samtools sort`:
 
 ```
 Usage:   samtools rocksort [options] <in.bam> <out.prefix>
@@ -57,7 +57,7 @@ cat <in.bam> | pigz -dc | samtools rocksort [options] - <out.prefix>
 
 #### Estimating data size (`-s`) for background compactions
 
-**Note:** background compactions are generally useful only when the dataset to be sorted is many times larger than provisioned memory. See our blog post introducing rocksort for more explanation.
+**Note:** background compactions are generally useful only when the dataset to be sorted is many times larger than provisioned memory. See [our blog post introducing rocksort](http://devblog.dnanexus.com/faster-bam-sorting-with-samtools-and-rocksdb/) for more explanation.
 
 To plan efficient background compactions, rocksort needs a rough estimate of the total *uncompressed* size of the BAM data. A rough rule of thumb is to quadruple the expected size of the final BAM file. For example, if you expect to produce a 125 GiB final BAM (roughly a deep human WGS), a size estimate of 500 GiB would work pretty well. Note that sorted BAMs are substantially smaller than unsorted BAMs, since they're more compressible.
 
