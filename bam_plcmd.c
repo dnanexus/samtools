@@ -13,42 +13,6 @@
 #include "sam_header.h"
 #include "samtools.h"
 
-/*!  
-  // Put this in htslib?
-  @abstract Calculate the rightmost coordinate of an alignment on the
-  reference genome.
-
-  @param  c      pointer to the bam1_core_t structure
-  @param  cigar  the corresponding CIGAR array (from bam1_t::cigar)
-  @return        the rightmost coordinate, 0-based
- */
-uint32_t bam_calend(const bam1_core_t *c, const uint32_t *cigar)
-{
-    int k, end = c->pos;
-    for (k = 0; k < c->n_cigar; ++k) {
-        int op  = bam_cigar_op(cigar[k]);
-        int len = bam_cigar_oplen(cigar[k]);
-        if (op == BAM_CBACK) { // move backward
-            int l, u, v;
-            if (k == c->n_cigar - 1) break; // skip trailing 'B'
-            for (l = k - 1, u = v = 0; l >= 0; --l) {
-                int op1  = bam_cigar_op(cigar[l]);
-                int len1 = bam_cigar_oplen(cigar[l]);
-                if (bam_cigar_type(op1)&1) { // consume query
-                    if (u + len1 >= len) { // stop
-                        if (bam_cigar_type(op1)&2) v += len - u;
-                        break;
-                    } else u += len1;
-                }
-                if (bam_cigar_type(op1)&2) v += len1;
-            }
-            end = l < 0? c->pos : end - v;
-        } else if (bam_cigar_type(op)&2) end += bam_cigar_oplen(cigar[k]);
-    }
-    return end;
-}
-
-
 static inline int printw(int c, FILE *fp)
 {
 	char buf[16];
@@ -157,7 +121,7 @@ static int mplp_func(void *data, bam1_t *b)
 	int ret, skip = 0;
 	do {
 		int has_ref;
-		ret = ma->iter? bam_itr_next(ma->fp, ma->iter, b) : sam_read1(ma->fp, ma->h, b);
+		ret = ma->iter? sam_itr_next(ma->fp, ma->iter, b) : sam_read1(ma->fp, ma->h, b);
 		if (ret < 0) break;
         // The 'B' cigar operation is not part of the specification, considering as obsolete.
 		//  bam_remove_B(b);
@@ -168,7 +132,7 @@ static int mplp_func(void *data, bam1_t *b)
         if (ma->conf->rflag_require && !(ma->conf->rflag_require&b->core.flag)) { skip = 1; continue; }
         if (ma->conf->rflag_filter && ma->conf->rflag_filter&b->core.flag) { skip = 1; continue; }
 		if (ma->conf->bed) { // test overlap
-			skip = !bed_overlap(ma->conf->bed, ma->h->target_name[b->core.tid], b->core.pos, bam_calend(&b->core, bam_get_cigar(b)));
+			skip = !bed_overlap(ma->conf->bed, ma->h->target_name[b->core.tid], b->core.pos, bam_endpos(b));
 			if (skip) continue;
 		}
 		if (ma->conf->rghash) { // exclude read groups
@@ -190,7 +154,7 @@ static int mplp_func(void *data, bam1_t *b)
 			if (q < 0) skip = 1;
 			else if (b->core.qual > q) b->core.qual = q;
 		}
-		else if (b->core.qual < ma->conf->min_mq) skip = 1; 
+		if (b->core.qual < ma->conf->min_mq) skip = 1; 
 		else if ((ma->conf->flag&MPLP_NO_ORPHAN) && (b->core.flag&1) && !(b->core.flag&2)) skip = 1;
 	} while (skip);
 	return ret;
@@ -286,12 +250,12 @@ static int mpileup(mplp_conf_t *conf, int n, char **fn)
         // Collect read group IDs with PL (platform) listed in pl_list (note: fragile, strstr search)
 		rghash = bcf_call_add_rg(rghash, h_tmp->text, conf->pl_list);
 		if (conf->reg) {
-			hts_idx_t *idx = bam_index_load(fn[i]);
+			hts_idx_t *idx = sam_index_load(data[i]->fp, fn[i]);
 			if (idx == 0) {
 				fprintf(stderr, "[%s] fail to load index for %s\n", __func__, fn[i]);
 				exit(1);
 			}
-            if ( (data[i]->iter=bam_itr_querys(idx, data[i]->h, conf->reg)) == 0) {
+            if ( (data[i]->iter=sam_itr_querys(idx, data[i]->h, conf->reg)) == 0) {
                 fprintf(stderr, "[E::%s] fail to parse region '%s'\n", __func__, conf->reg);
                 exit(1);
             }
@@ -472,7 +436,10 @@ static int mpileup(mplp_conf_t *conf, int n, char **fn)
 					if (conf->flag & MPLP_PRINT_MAPQ) {
 						putchar('\t');
 						for (j = 0; j < n_plp[i]; ++j) {
-							int c = plp[i][j].b->core.qual + 33;
+                            const bam_pileup1_t *p = plp[i] + j;
+                            int c = bam_get_qual(p->b)[p->qpos];
+                            if ( c < conf->min_baseQ ) continue;
+							c = plp[i][j].b->core.qual + 33;
 							if (c > 126) c = 126;
 							putchar(c);
 						}

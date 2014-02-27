@@ -3,7 +3,11 @@
 
 This is a fork of [samtools](http://samtools.sourceforge.net/) maintained (without warranty) by [DNAnexus](https://www.dnanexus.com/). See [COPYING](https://github.com/dnanexus/samtools/blob/dnanexus/COPYING).
 
-### Compiling
+The original samtools package has been split into three separate
+but tightly coordinated projects:
+- [htslib](https://github.com/samtools/htslib): C-library for handling high-throughput sequencing data
+- samtools: mpileup and other tools for handling SAM, BAM, CRAM
+- [bcftools](https://github.com/samtools/bcftools): calling and other tools for handling VCF, BCF
 
 This version of samtools incorporates [RocksDB](http://rocksdb.org/) as a [git submodule](http://git-scm.com/docs/git-submodule). RocksDB has several build dependencies; see [facebook/rocksdb/INSTALL.md](https://github.com/facebook/rocksdb/blob/master/INSTALL.md). Additionally, a development installation of [jemalloc](http://www.canonware.com/jemalloc/) is required (available in most Linux package managers).
 
