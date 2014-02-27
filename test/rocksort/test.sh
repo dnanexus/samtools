@@ -61,6 +61,10 @@ if [ "$result_sam_count" != "$expected_sam_count" ]; then
 fi
 ./bamsorted "$sorted_bam"
 
+echo "Sort by read name..."
+time $samtools rocksort -n -l 1 -@ 2 -m 16M "$shuffled_bam" "${testdir}/samtools_rocksort_test_sorted"
+sorted_bam="${testdir}/samtools_rocksort_test_sorted_by_name.bam"
+
 # Clean up
 rm -rf $testdir
 echo "Test passed. Cleaned up $testdir"

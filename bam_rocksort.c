@@ -164,7 +164,8 @@ static void nop_rocksdb_comparator_destructor(void *c) {
 }
 
 /* given a bam1_t, formulate the appropriate key for insertion into RocksDB */
-static size_t formulate_key(const int sort_key, bam1_t *b, uint64_t seqno, char *keybuf, size_t *keybufsz) {
+static size_t formulate_key(const int sort_key, bam1_t *b, uint64_t seqno, char **keybufp, size_t *keybufsz) {
+	char *keybuf = *keybufp;
 	size_t keylen = 0;
 	assert(*keybufsz >= 2*sizeof(uint64_t));
 	switch (sort_key) {
@@ -200,6 +201,7 @@ static size_t formulate_key(const int sort_key, bam1_t *b, uint64_t seqno, char 
 		seqno >>= 8;
 		keylen++;
 	}
+	*keybufp = keybuf;
 	return keylen;
 }
 
@@ -239,7 +241,7 @@ static int bam_to_rocksdb(bamFile fp, rocksdb_t *rdb, const int sort_key, unsign
 	/* for each BAM record */
 	while ((ret = bam_read1(fp,b)) >= 0) {
 		/* formulate key for insertion into RocksDB */
-		if (!(keylen = formulate_key(sort_key, b, ++(*count), key, &keybufsz))) {
+		if (!(keylen = formulate_key(sort_key, b, ++(*count), &key, &keybufsz))) {
 			ret = -4;
 			goto cleanup;
 		}
